@@ -11,7 +11,7 @@ export default class BFS extends Component {
             hexSize: 20,
             hexOrigin: { x: 400, y: 300},
             currentHex: { q: 0, r: 0, s: 0, x: 0, y: 0},
-            playerPosition: { q: 0, r: 0, s: 0, x: 0, y: 0},
+            obstacles:[],
             canvasSize: { canvasWidth: 800, canvasHeight: 600 },
             hexParametres: null
         }
@@ -21,36 +21,38 @@ export default class BFS extends Component {
         const hexParametres = this.getHexParametres();
         this.setState({ hexParametres }, () => {
             this.initializeCanvas();
-            this.getCanvasPosition(this.canvasCoordinates);
+            this.getCanvasPosition(this.canvasInteraction);
             this.drawHexes();
-            this.canvasCoordinates.width = this.state.canvasSize.canvasWidth;
-            this.canvasCoordinates.height = this.state.canvasSize.canvasHeight;
+            this.canvasInteraction.width = this.state.canvasSize.canvasWidth;
+            this.canvasInteraction.height = this.state.canvasSize.canvasHeight;
         });
     }
 
-    shouldComponentUpdate(nextProps, nextState) {
-        if(nextState.currentHex !== this.state.currentHex) {
-            const { x, y } = nextState.currentHex;
-            const { canvasWidth, canvasHeight } = this.state.canvasSize;
-            const ctx = this.canvasCoordinates.getContext("2d");
-            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-            let currentDistanceLine = nextState.currentDistanceLine;
-            for (let i = 0; i < currentDistanceLine.length - 1; i++) {
-                if (i == 0) {
-                    this.drawHex(this.canvasCoordinates, { x: currentDistanceLine[i].x, y: currentDistanceLine[i].y },"black", 1, "red");
-                }
-                else {
-                    this.drawHex(this.canvasCoordinates, { x: currentDistanceLine[i].x, y: currentDistanceLine[i].y }, "black", 1, "lime");
+   shouldComponentUpdate(nextProps, nextState) {
+    if (nextState.currentHex !== this.state.currentHex) {
+        const { x, y } = nextState.currentHex;
+        const { canvasWidth, canvasHeight } = this.state.canvasSize;
+        const ctx = this.canvasInteraction.getContext("2d");
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        let currentDistanceLine = nextState.currentDistanceLine;
+        if (currentDistanceLine) {
+            for (let i = 0; i < currentDistanceLine.length; i++) {
+                if (i === 0) {
+                    this.drawHex(this.canvasInteraction, currentDistanceLine[i], 1, "red", "red");
+                } else {
+                    this.drawHex(this.canvasInteraction, currentDistanceLine[i], 1, "black", "lime");
                 }
             }
-            const { q, r, s } = nextState.currentHex;
-            //this.drawNeighbors(this.Hex(q, r, s));
-            this.drawHex(this.canvasCoordinates, { x, y }, "lime", 2);
-            return true;
         }
-        return false;
+        nextState.obstacles.forEach((obstacle) => {
+            const { x, y } = JSON.parse(obstacle);
+            this.drawHex(this.canvasInteraction, { x, y }, 1, "black", "black");
+        });
+        this.drawHex(this.canvasInteraction, { x, y }, 1, "black", "lime");
+        return true;
     }
-
+    return false;
+}
     initializeCanvas() {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
         const ctx = this.canvasHex.getContext('2d');
@@ -77,21 +79,21 @@ export default class BFS extends Component {
         };
     }
 
-    drawHex(canvas, center, lineColor, width, fillColor) {
+    drawHex(canvas, center, lineWidth, lineColor, fillColor) {
         for (let i = 0; i <= 5; i++) {
             const start = this.getHexCornerCoord(center, i);
             const end = this.getHexCornerCoord(center, i + 1);
             this.fillHex(canvas, center, fillColor);
-            this.drawLine(canvas, start, end, lineColor, width);
+            this.drawLine(canvas, start, end, lineWidth, lineColor);
         }
     }
 
-    drawLine(canvas, start, end, color, width) {
+    drawLine(canvas, start, end, lineWidth, lineColor) {
         const ctx = canvas.getContext("2d");
         ctx.beginPath();
         ctx.moveTo(start.x, start.y);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = width;
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = lineWidth;
         ctx.lineTo(end.x, end.y);
         ctx.stroke();
     }
@@ -195,7 +197,7 @@ export default class BFS extends Component {
         const { q, r, s } = this.cubeRound(this.pixelToHex({ x: offsetX, y: offsetY }));
         const { x, y } = this.hexToPixel(this.Hex(q, r, s));
         let playerPosition = this.state.playerPosition
-        this.getDistanceLine(this.Hex(playerPosition.q, playerPosition.r, playerPosition.s), this.Hex(q,r,s));
+        this.getDistanceLine(this.Hex(0,0,0), this.Hex(q,r,s));
         console.log(this.state.currentDistanceLine);
         if((x > hexWidth / 2 && x < canvasWidth - hexWidth / 2) && (y > hexHeight / 2 && y < canvasHeight - hexHeight/2)){
             this.setState({
@@ -261,7 +263,7 @@ export default class BFS extends Component {
         for(let i = 0; i <= 5; i++) {
             const { q, r, s } = this.getCubeNeighbor(this.Hex(h.q, h.r, h.s), i);
             const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-            this.drawHex(this.canvasCoordinates, { x, y }, "red", 2);
+            this.drawHex(this.canvasInteraction, { x, y }, "red", 2);
         }
     }
 
@@ -312,8 +314,22 @@ export default class BFS extends Component {
     }
 
     handleClick() {
+        this.addObstacles(); 
+    }
+
+    addObstacles() {
+        let obstacles = this.state.obstacles;
+        if(!obstacles.includes(JSON.stringify(this.state.currentHex))) {
+            obstacles = [].concat(obstacles, JSON.stringify(this.state.currentHex));
+        } else {
+            obstacles.map((l,i) => {
+                if(l == JSON.stringify(this.state.currentHex)) {
+                    obstacles = obstacles.slice(0, i).concat(obstacles.slice(i+1));
+                }
+            })
+        }
         this.setState({
-            playerPosition: this.state.currentHex
+            obstacles: obstacles
         })
     }
 
@@ -323,10 +339,9 @@ export default class BFS extends Component {
         return (
             <div className="BFS">
             <canvas ref={canvas => this.canvasHex = canvas}></canvas>
-            <canvas ref={canvasCoordinates => this.canvasCoordinates = canvasCoordinates}
-            onMouseMove = {this.handleMouseMove}
-            onClick={this.handleClick}>
-            </canvas>
+            <canvas ref={canvasCoordinates => this.canvasCoordinates = canvasCoordinates}></canvas>
+            <canvas ref={canvasInteraction => this.canvasInteraction = canvasInteraction} onMouseMove = {this.handleMouseMove}
+            onClick={this.handleClick}></canvas>
             </div>
         );
     }
