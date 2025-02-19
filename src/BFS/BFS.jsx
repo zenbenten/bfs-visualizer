@@ -57,12 +57,10 @@ export default class BFS extends Component {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
         const ctx = this.canvasHex.getContext('2d');
 
-        // Clear and reset canvas
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
         this.canvasHex.width = canvasWidth;
         this.canvasHex.height = canvasHeight;
 
-        // Set default drawing styles
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
         ctx.font = '12px Arial';
@@ -102,28 +100,22 @@ export default class BFS extends Component {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
         const { hexSize, hexOrigin } = this.state;
 
-        // Calculate vertical bounds considering hexagon height
         const hexHeight = 2 * hexSize;
-        const maxY = canvasHeight - hexHeight / 2;  // Bottom edge
-        const minY = hexHeight / 2;                 // Top edge
+        const maxY = canvasHeight - hexHeight / 2;  //bottom
+        const minY = hexHeight / 2;                 //top
 
-        // Calculate horizontal bounds considering hexagon width
         const hexWidth = Math.sqrt(3) * hexSize;
-        const maxX = canvasWidth - hexWidth / 2;     // Right edge
-        const minX = hexWidth / 2;                   // Left edge
+        const maxX = canvasWidth - hexWidth / 2;     //right
+        const minX = hexWidth / 2;                   //left
 
-        // Calculate row bounds (r-axis)
         const maxR = Math.floor((maxY - hexOrigin.y) / (hexSize * 1.5));
         const minR = Math.ceil((minY - hexOrigin.y) / (hexSize * 1.5));
 
-        // Calculate column bounds for each row
         for (let r = minR; r <= maxR; r++) {
             const y = hexOrigin.y + r * hexSize * 1.5;
 
-            // Calculate horizontal offset for this row
             const xOffset = (hexOrigin.x + (r % 2) * hexWidth / 2);
 
-            // Calculate column range for this row
             const cols = Math.floor((canvasWidth - hexWidth / 2) / (hexWidth));
             const qMin = -cols;
             const qMax = cols;
@@ -134,7 +126,6 @@ export default class BFS extends Component {
                     y: y
                 };
 
-                // Check if hexagon is fully within canvas
                 if (center.x >= minX && center.x <= maxX &&
                     center.y >= minY && center.y <= maxY) {
                     this.drawHex(this.canvasHex, center, "black", 1, "grey");
@@ -218,7 +209,7 @@ export default class BFS extends Component {
         let origin = this.state.hexOrigin;
         let q = ((p.x - origin.x) * Math.sqrt(3)/3 - (p.y - origin.y) / 3) / size;
         let r = (p.y - origin.y) * 2/3 / size;
-        return { q, r, s: -q - r }; // Return object directly instead of using Hex()
+        return { q, r, s: -q - r }; 
     }
 
     cubeRound(cube) {
@@ -238,7 +229,7 @@ export default class BFS extends Component {
             rz = -rx - ry;
         }
 
-        return { q: rx, r: ry, s: rz }; // Use object literal instead of Hex()
+        return { q: rx, r: ry, s: rz }; 
     }
 
 
