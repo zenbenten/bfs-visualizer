@@ -1,0 +1,7 @@
+body{
+    background: #FFFFFF;
+}
+canvas{
+    position:absolute;
+    left: 0;
+}
