@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/bfs-visualizer/static/css/main.dfcb09a4.css",
-    "main.js": "/bfs-visualizer/static/js/main.77f6c6b0.js",
-    "static/js/488.2d0dff15.chunk.js": "/bfs-visualizer/static/js/488.2d0dff15.chunk.js",
-    "index.html": "/bfs-visualizer/index.html",
-    "main.dfcb09a4.css.map": "/bfs-visualizer/static/css/main.dfcb09a4.css.map",
-    "main.77f6c6b0.js.map": "/bfs-visualizer/static/js/main.77f6c6b0.js.map",
-    "488.2d0dff15.chunk.js.map": "/bfs-visualizer/static/js/488.2d0dff15.chunk.js.map"
+    "main.css": "/bfs-visualized/static/css/main.dfcb09a4.css",
+    "main.js": "/bfs-visualized/static/js/main.e4af2cfc.js",
+    "static/js/488.2d0dff15.chunk.js": "/bfs-visualized/static/js/488.2d0dff15.chunk.js",
+    "index.html": "/bfs-visualized/index.html",
+    "main.dfcb09a4.css.map": "/bfs-visualized/static/css/main.dfcb09a4.css.map",
+    "main.e4af2cfc.js.map": "/bfs-visualized/static/js/main.e4af2cfc.js.map",
+    "488.2d0dff15.chunk.js.map": "/bfs-visualized/static/js/488.2d0dff15.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.dfcb09a4.css",
-    "static/js/main.77f6c6b0.js"
+    "static/js/main.e4af2cfc.js"
   ]
 }
