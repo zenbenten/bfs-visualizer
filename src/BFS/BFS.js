@@ -101,7 +101,7 @@ export default class BreadthFirstSearch extends React.Component {
             for (let l in nextState.cameFrom) {
                 const { q, r, s } = JSON.parse(l);
                 const { x, y } = this.hexToPixel(this.Hex(q, r));
-                this.drawHex(this.canvasView, this.Point(x, y), 1, "black", "green", 0.1);
+                this.drawHex(this.canvasView, this.Point(x, y), 1, "black", "orange", 0.1);
                 var from = JSON.parse(nextState.cameFrom[l]);
                 var fromCoord = this.hexToPixel(this.Hex(from.q, from.r));
                 this.drawArrow(fromCoord.x, fromCoord.y, x, y);
