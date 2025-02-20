@@ -1,11 +1,14 @@
-import logo from './logo.svg';
-import './App.css';
-import BFS from './BFS/BFS';
+import React from 'react';
+import BreadthFirstSearch from './BFS/BFS';
+import './BFS/BFS.css';
 
 function App() {
   return (
-    <div className="App">
-      <BFS></BFS>
+    <div className="app-container">
+      {/* Single BFS Visualization */}
+      <div className="bfs-container">
+        <BreadthFirstSearch />
+      </div>
     </div>
   );
 }
