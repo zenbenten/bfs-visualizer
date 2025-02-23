@@ -1,3 +1,4 @@
+
 import React, {Component} from 'react';
 
 var WALLS = [ 
@@ -45,7 +46,6 @@ var WALLS = [
 export default class BreadthFirstSearch extends React.Component {
     constructor(props) {
         super(props);
-        // Initialize obstaclesRef as a Set for O(1) lookups
         this.obstaclesRef = React.createRef();
         this.obstaclesRef.current = new Set(WALLS);
 
@@ -159,7 +159,7 @@ export default class BreadthFirstSearch extends React.Component {
                     y > hexHeight / 2 &&
                     y < canvasHeight - hexHeight / 2
                 ) {
-                    this.drawHex(this.canvasHex, this.Point(x, y), 1, "black", "#e0e0e0");
+                    this.drawHex(this.canvasHex, this.Point(x, y), 1, "black", "grey");
                     var bottomH = JSON.stringify(this.Hex(q - p, r, -(q - p) - r));
                     if (!this.state.obstacles.includes(bottomH)) {
                         hexPathMap.push(bottomH);
@@ -200,35 +200,12 @@ export default class BreadthFirstSearch extends React.Component {
     }
 
     drawHex(canvasID, center, lineWidth, lineColor, fillColor) {
-        const ctx = canvasID.getContext("2d");
-        ctx.beginPath();
-        ctx.globalAlpha = 1; // Reset alpha before drawing
-
-        // Draw the fill
-        ctx.beginPath();
-        for (let i = 0; i <= 5; i++) {
-            let point = this.getHexCornerCoord(center, i);
-            if (i === 0) {
-                ctx.moveTo(point.x, point.y);
-            } else {
-                ctx.lineTo(point.x, point.y);
-            }
-        }
-        ctx.closePath();
-        ctx.fillStyle = fillColor;
-        ctx.fill();
-
-        // Draw the border
-        ctx.beginPath();
         for (let i = 0; i <= 5; i++) {
             let start = this.getHexCornerCoord(center, i);
             let end = this.getHexCornerCoord(center, i + 1);
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
+            this.fillHex(canvasID, center, fillColor);
+            this.drawLine(canvasID, start, end, lineWidth, lineColor);
         }
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = lineWidth;
-        ctx.stroke();
     }
 
     getHexCornerCoord(center, i) {
@@ -467,24 +444,26 @@ export default class BreadthFirstSearch extends React.Component {
             });
         }
 
+        // Optimized wall handling using obstaclesRef
         if (this.state.isRightMouseDown) {
             const hexStr = JSON.stringify(this.Hex(q, r, s));
-            const ctx = this.canvasHex.getContext("2d");
 
-            // Clear the specific hex area before redrawing
-            const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-            ctx.save();
-            ctx.globalAlpha = 1;
-
-            if (!this.obstaclesRef.current.has(hexStr)) {
-                this.obstaclesRef.current.add(hexStr);
-                this.drawSingleObstacle(hexStr, "#404040");
-            } else {
-                this.obstaclesRef.current.delete(hexStr);
-                this.drawSingleHex(hexStr, "#e0e0e0");
+            // Check if the current hex is the same as the last processed to prevent toggling
+            if (hexStr === this.lastRightDragHex) {
+                return;
             }
-            ctx.restore();
+            this.lastRightDragHex = hexStr;
 
+            const ctx = this.canvasHex.getContext("2d");
+            if (!this.obstaclesRef.current.has(hexStr)) {
+                // Add wall with a distinct color (e.g., green)
+                this.obstaclesRef.current.add(hexStr);
+                this.drawSingleObstacle(hexStr, "darkgreen", "lime");
+            } else {
+                // Remove wall and redraw as base grey
+                this.obstaclesRef.current.delete(hexStr);
+                this.drawSingleHex(hexStr, "grey");
+            }
             this.breadthFirstSearch(this.state.playerPosition);
         }
     }
@@ -631,16 +610,16 @@ export default class BreadthFirstSearch extends React.Component {
         }
     };
 
-    drawSingleObstacle(hexStr, color) {
+    drawSingleObstacle(hexStr, lineColor, fillColor) {
         const { q, r, s } = JSON.parse(hexStr);
         const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-        this.drawHex(this.canvasHex, this.Point(x, y), 1, "black", "#404040"); // Use a consistent dark color
+        this.drawHex(this.canvasHex, this.Point(x, y), 1, lineColor, fillColor);
     }
-
+    
     drawSingleHex(hexStr, color) {
         const { q, r, s } = JSON.parse(hexStr);
         const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-        this.drawHex(this.canvasHex, this.Point(x, y), 1, "black", "#e0e0e0"); // Use a consistent light color
+        this.drawHex(this.canvasHex, this.Point(x, y), 1, "yellow", color);
     }
 
     drawObstacles() {
@@ -695,4 +674,3 @@ export default class BreadthFirstSearch extends React.Component {
         );
     }
 }
-
