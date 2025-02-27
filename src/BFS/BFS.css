@@ -230,3 +230,17 @@ button.expandButton1 {
 .obstacle-hex {
   transition: fill 0.2s ease;
 }
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.hex-player-animated {
+  animation: pulse 0.5s infinite;
+}
+
+.hex-path-highlight {
+  transition: opacity 0.3s ease;
+}

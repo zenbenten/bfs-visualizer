@@ -21,6 +21,10 @@ export default class BreadthFirstSearch extends Component {
         this.obstaclesRef = createRef();
         this.obstaclesRef.current = new Set(WALLS);
 
+        // Animation related variables
+        this.animationFrameId = null;
+        this.animationSpeed = 15; // Speed of animation (lower = faster)
+
         // Canvas refs
         this.canvasHex = createRef();
         this.canvasView = createRef();
@@ -38,7 +42,7 @@ export default class BreadthFirstSearch extends Component {
         // Throttling variables
         this.lastRightDragHex = null;
         this.lastRightDragTime = 0;
-        this.lastWallUpdateTime = 0; // Add this for throttling wall updates
+        this.lastWallUpdateTime = 0; 
 
         this.state = {
             hexSize: 20,
@@ -51,7 +55,14 @@ export default class BreadthFirstSearch extends Component {
             hexPathMap: [],
             path: [],
             isRightMouseDown: false,
-            canvasSize: { canvasWidth: 800, canvasHeight: 600 }
+            canvasSize: { canvasWidth: 800, canvasHeight: 600 },
+            isAnimating: false,
+            animationPath: [],
+            animationIndex: 0,
+            animationPosition: null,
+            animationTrail: [],
+            clickEffect: null,
+            clickEffectTime: 0
         };
     }
 
@@ -78,6 +89,12 @@ export default class BreadthFirstSearch extends Component {
 
     componentWillUnmount() {
         this.removeEventListeners();
+        window.removeEventListener('resize', this.handleResize);
+
+        // Clear any ongoing animation
+        if (this.animationFrameId) {
+            clearTimeout(this.animationFrameId);
+        }
     }
 
     // Setup methods
@@ -321,7 +338,8 @@ export default class BreadthFirstSearch extends Component {
                 Point(x, y),
                 this.state.hexSize,
                 "black",
-                "red"
+                "yellow",
+                0.3
             );
         }
     }
@@ -358,9 +376,6 @@ export default class BreadthFirstSearch extends Component {
             hexOrigin
         );
 
-        // Get player position
-        let playerPosition = this.state.playerPosition;
-
         // Check if the current hex is a wall
         const hexStr = JSON.stringify(Hex(q, r, s));
         const isWall = this.obstaclesRef.current.has(hexStr);
@@ -378,9 +393,13 @@ export default class BreadthFirstSearch extends Component {
 
             // Only update lastValidHex and path if not on a wall
             if (!isWall) {
-                // Calculate path
+                // Calculate path from the CURRENT player position (which might be animating)
+                // or from the actual player position if not animating
+                const startPosition = this.state.isAnimating ? 
+                    this.state.animationPosition : this.state.playerPosition;
+
                 const path = getPath(
-                    Hex(playerPosition.q, playerPosition.r, playerPosition.s),
+                    startPosition,
                     Hex(q, r, s),
                     this.state.cameFrom
                 );
@@ -389,6 +408,13 @@ export default class BreadthFirstSearch extends Component {
                     lastValidHex: { q, r, s, x, y },
                     path
                 });
+
+                // If we're animating, redraw with animation, otherwise redraw normally
+                if (this.state.isAnimating) {
+                    this.redrawWithAnimation();
+                } else {
+                    this.redrawEverything();
+                }
             }
         }
 
@@ -445,7 +471,7 @@ export default class BreadthFirstSearch extends Component {
                 // If we're on a wall, use lastValidHex for path calculation
                 if (isWall && this.state.lastValidHex) {
                     const newPath = getPath(
-                        Hex(playerPosition.q, playerPosition.r, playerPosition.s),
+                        this.state.playerPosition,
                         Hex(this.state.lastValidHex.q, this.state.lastValidHex.r, this.state.lastValidHex.s),
                         cameFrom
                     );
@@ -465,6 +491,9 @@ export default class BreadthFirstSearch extends Component {
     }
 
     handleClick = () => {
+        // Don't allow new clicks during animation
+        if (this.state.isAnimating) return;
+
         const { currentHex } = this.state;
         const { q, r, s } = currentHex;
         const hexStr = JSON.stringify(Hex(q, r, s));
@@ -474,37 +503,34 @@ export default class BreadthFirstSearch extends Component {
             return;
         }
 
-        // Clear all canvases completely
-        const { canvasWidth, canvasHeight } = this.state.canvasSize;
-        clearCanvas(this.canvasHex.current, canvasWidth, canvasHeight);
-        clearCanvas(this.canvasInteraction.current, canvasWidth, canvasHeight);
-        clearCanvas(this.canvasView.current, canvasWidth, canvasHeight);
-
-        // Update player position unconditionally
-        this.setState(
-            {
-                path: [],
-                playerPosition: Hex(q, r, s)
-            },
-            () => {
-                // Redraw everything from scratch
-                this.drawHexes();
-
-                const cameFrom = breadthFirstSearch(
-                    this.state.playerPosition,
-                    this.state.hexPathMap,
-                    this.obstaclesRef.current
-                );
-                this.setState({ cameFrom }, () => {
-                    // Draw in the correct order
-                    this.drawObstacles();
-                    if (this.state.path.length > 0) {
-                        this.drawPath();
-                    }
-                    this.drawPlayerPosition();
-                });
-            }
+        // Get the path to the clicked position
+        const path = getPath(
+            this.state.playerPosition,
+            Hex(q, r, s),
+            this.state.cameFrom
         );
+
+        if (!path || path.length === 0) return;
+
+        // Add click effect at target location
+        const { x, y } = hexToPixel(
+            Hex(q, r, s), 
+            this.state.hexSize, 
+            this.state.hexOrigin
+        );
+
+        this.setState({
+            clickEffect: {
+                x, y,
+                size: this.state.hexSize
+            },
+            clickEffectTime: Date.now()
+        }, () => {
+            requestAnimationFrame(this.drawClickEffect);
+        });
+
+        // Start the animation
+        this.startPathAnimation(path);
     }
 
     handleRightClick = (e) => {
@@ -611,6 +637,226 @@ export default class BreadthFirstSearch extends Component {
             this.lastRightDragHex = null;
             this.lastWallUpdateTime = 0;
         }
+    }
+
+    startPathAnimation = (path) => {
+        if (!path || path.length === 0) return;
+
+        // Convert the path of strings to actual coordinates
+        const animationPath = path.map(p => {
+            const { q, r, s } = JSON.parse(p);
+            const { x, y } = hexToPixel(
+                Hex(q, r, s), 
+                this.state.hexSize, 
+                this.state.hexOrigin
+            );
+            return { q, r, s, x, y };
+        });
+
+        // Store the target position (where the user clicked)
+        const targetPosition = animationPath[animationPath.length - 1];
+
+        // Set initial animation state
+        // Note: We're clearing the path here to remove red hexes during animation
+        this.setState({
+            isAnimating: true,
+            animationPath,
+            animationIndex: 0,
+            animationPosition: { ...this.state.playerPosition },
+            targetPosition, // Store this for later use
+            path: [], // Clear the path
+            animationTrail: [] // Initialize empty trail
+        }, () => {
+            // Start the animation loop
+            this.animateAlongPath();
+        });
+    }
+
+    animateAlongPath = () => {
+        const { animationIndex, animationPath } = this.state;
+
+        if (animationIndex >= animationPath.length - 1) {
+            // Animation complete - update player position to target
+            const finalPosition = animationPath[animationPath.length - 1];
+
+            this.setState({
+                isAnimating: false,
+                playerPosition: finalPosition,
+                animationPosition: null,
+                animationTrail: [] // Clear the trail
+            }, () => {
+                // Recalculate BFS with new player position
+                const cameFrom = breadthFirstSearch(
+                    this.state.playerPosition,
+                    this.state.hexPathMap,
+                    this.obstaclesRef.current
+                );
+                this.setState({ cameFrom });
+
+                // Final redraw
+                this.redrawEverything();
+            });
+
+            return;
+        }
+
+        // Keep a trail of recent positions (max 3)
+        const trailLength = 3; 
+        const newTrail = [...this.state.animationTrail];
+
+        if (animationIndex > 0) {
+            newTrail.push(animationPath[animationIndex]);
+            if (newTrail.length > trailLength) {
+                newTrail.shift();
+            }
+        }
+
+        // Move to next position in path
+        this.setState({
+            animationIndex: animationIndex + 1,
+            animationPosition: animationPath[animationIndex + 1],
+            animationTrail: newTrail
+        }, () => {
+            // Redraw with animation position
+            this.redrawWithAnimation();
+
+            // Schedule next frame
+            // 
+            this.animationFrameId = setTimeout(
+                this.animateAlongPath, 
+                this.animationSpeed
+            );
+        });
+    }
+
+    redrawWithAnimation = () => {
+        const { canvasWidth, canvasHeight } = this.state.canvasSize;
+        const ctx = this.canvasInteraction.current.getContext("2d");
+
+        // Clear the interaction canvas
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // Draw obstacles
+        this.drawObstacles();
+
+        // Draw the animation path from start to current position with lower opacity
+        const { animationPath, animationIndex } = this.state;
+        for (let i = 0; i <= animationIndex; i++) {
+            const { x, y } = animationPath[i];
+            drawHex(
+                ctx,
+                Point(x, y),
+                this.state.hexSize,
+                "black",
+                "green",
+                0.3 // Lower opacity for path
+            );
+        }
+
+        // Draw the trail with fading opacity
+        this.state.animationTrail.forEach((position, index) => {
+            const opacity = 0.3 * ((index + 1) / this.state.animationTrail.length);
+            drawHex(
+                ctx,
+                Point(position.x, position.y),
+                this.state.hexSize * 0.8, // Slightly smaller
+                "black",
+                "green",
+                opacity
+            );
+        });
+
+        // Draw the path to mouse if we have one
+        if (this.state.path && this.state.path.length > 0) {
+            for (let i = 0; i < this.state.path.length; i++) {
+                const { q, r } = JSON.parse(this.state.path[i]);
+                const { x, y } = hexToPixel(
+                    Hex(q, r, -q - r), 
+                    this.state.hexSize, 
+                    this.state.hexOrigin
+                );
+                drawHex(
+                    ctx,
+                    Point(x, y),
+                    this.state.hexSize,
+                    "black",
+                    "blue", // Use a different color for the path to mouse
+                    0.5    // Medium opacity
+                );
+            }
+        }
+
+        // Draw animation position (player)
+        const { x, y } = this.state.animationPosition;
+        this.drawPulsingHex(
+            ctx,
+            Point(x, y),
+            this.state.hexSize,
+            "black",
+            "green"
+        );
+        this.drawClickEffect();
+    }
+
+    redrawEverything = () => {
+        const { canvasWidth, canvasHeight } = this.state.canvasSize;
+
+        // Clear canvases
+        const ctxInteraction = this.canvasInteraction.current.getContext("2d");
+        ctxInteraction.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // Draw in correct order
+        this.drawObstacles();
+        this.drawPath();
+        this.drawPlayerPosition();
+    }
+
+    drawPulsingHex = (ctx, center, size, lineColor, fillColor) => {
+        // Calculate pulse effect (0.9 to 1.1 scale)
+        const pulseScale = 1 + 0.1 * Math.sin(Date.now() / 100);
+        const pulseSize = size * pulseScale;
+
+        // Draw the hex with the pulsing size
+        drawHex(
+            ctx,
+            center,
+            pulseSize,
+            lineColor,
+            fillColor,
+            1.0
+        );
+    }
+
+    drawClickEffect = () => {
+        const { clickEffect, clickEffectTime } = this.state;
+        if (!clickEffect) return;
+
+        const ctx = this.canvasInteraction.current.getContext("2d");
+        const elapsed = Date.now() - clickEffectTime;
+        const duration = 250; // Effect duration in ms
+
+        if (elapsed > duration) {
+            this.setState({ clickEffect: null });
+            return;
+        }
+
+        // Calculate effect size and opacity
+        const progress = elapsed / duration;
+        const size = clickEffect.size * (1 + progress);
+        const opacity = 1 - progress;
+
+        // Draw expanding hex
+        drawHex(
+            ctx,
+            Point(clickEffect.x, clickEffect.y),
+            size,
+            `rgba(255, 200, 0, ${opacity})`,
+            `rgba(255, 255, 0, ${opacity * 0.3})`,
+            opacity
+        );
+
+        // Request next frame
+        requestAnimationFrame(this.drawClickEffect);
     }
 
     // Utility functions
