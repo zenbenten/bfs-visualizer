@@ -1,11 +1,24 @@
 import React, { Component, createRef } from 'react';
 import { WALLS } from './walls';
+import Canvas from './components/Canvas';
+import Controls from './components/Controls';
+import { 
+    hexToPixel, pixelToHex, cubeRound, Hex, Point, 
+    getDistanceLine, getNeighbors
+} from './utils/hexUtils';
+import {
+    drawHex, clearCanvas, drawHexCoordinates
+} from './utils/drawingUtils';
+import {
+    breadthFirstSearch, getPath
+} from './utils/pathfinding';
+import './BFS.css';
 
-export default class BreadthFirstSearch extends React.Component {
+export default class BreadthFirstSearch extends Component {
     constructor(props) {
         super(props);
         this.originalWalls = new Set(WALLS);
-        this.obstaclesRef = React.createRef();
+        this.obstaclesRef = createRef();
         this.obstaclesRef.current = new Set(WALLS);
 
         // Canvas refs
@@ -22,16 +35,18 @@ export default class BreadthFirstSearch extends React.Component {
             y: hexOrigin.y
         };
 
-        // (Optional) Throttling variables
+        // Throttling variables
         this.lastRightDragHex = null;
         this.lastRightDragTime = 0;
+        this.lastWallUpdateTime = 0; // Add this for throttling wall updates
 
         this.state = {
             hexSize: 20,
             hexOrigin: hexOrigin,
             currentHex: { q: 0, r: 0, s: 0, x: 0, y: 0 },
+            lastValidHex: { q: 0, r: 0, s: 0, x: 0, y: 0 },
             playerPosition: { ...playerHex, ...playerPixel },
-            obstacles: WALLS, // For initialization only
+            obstacles: WALLS,
             cameFrom: {},
             hexPathMap: [],
             path: [],
@@ -41,12 +56,23 @@ export default class BreadthFirstSearch extends React.Component {
     }
 
     componentDidMount() {
-        // Calculate hex parameters before mounting
-        const hexParametres = this.getHexParametres();
-        this.setState({ hexParametres }, () => {
-            this.initializeCanvases();
-            this.setupEventListeners();
-            this.drawInitialState();
+        // Wait for refs to be available
+        requestAnimationFrame(() => {
+            // Calculate hex parameters
+            const hexParameters = this.getHexParametres();
+            this.setState({ hexParameters }, () => {
+                // Make sure refs are available before proceeding
+                if (this.canvasHex.current && 
+                    this.canvasView.current && 
+                    this.canvasInteraction.current && 
+                    this.canvasCoordinates.current) {
+                    this.initializeCanvases();
+                    this.setupEventListeners();
+                    this.drawInitialState();
+                } else {
+                    console.error("Canvas references not available");
+                }
+            });
         });
     }
 
@@ -58,7 +84,7 @@ export default class BreadthFirstSearch extends React.Component {
     initializeCanvases = () => {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
 
-        // Initialize all canvases with proper dimensions
+        // Initialize all canvases with proper dimensions - REMOVE canvasPath
         const canvases = [
             this.canvasHex.current,
             this.canvasInteraction.current,
@@ -98,7 +124,12 @@ export default class BreadthFirstSearch extends React.Component {
         // We need to wait for hexPathMap to be populated
         setTimeout(() => {
             // Run BFS with initial player position
-            this.breadthFirstSearch(this.state.playerPosition);
+            const cameFrom = breadthFirstSearch(
+                this.state.playerPosition, 
+                this.state.hexPathMap, 
+                this.obstaclesRef.current
+            );
+            this.setState({ cameFrom });
 
             // Draw obstacles
             this.drawObstacles();
@@ -110,29 +141,25 @@ export default class BreadthFirstSearch extends React.Component {
 
     // Update handling
     componentDidUpdate(prevProps, prevState) {
-        if (this.shouldUpdateForCurrentHex(prevState)) {
+        if (prevState.currentHex !== this.state.currentHex) {
             this.updateForCurrentHexChange();
         }
 
-        if (this.shouldUpdateForCameFrom(prevState)) {
+        if (prevState.cameFrom !== this.state.cameFrom) {
             this.updateForCameFromChange();
         }
-    }
-
-    shouldUpdateForCurrentHex = (prevState) => {
-        return prevState.currentHex !== this.state.currentHex;
-    }
-
-    shouldUpdateForCameFrom = (prevState) => {
-        return prevState.cameFrom !== this.state.cameFrom;
     }
 
     updateForCurrentHexChange = () => {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
         const ctx = this.canvasInteraction.current.getContext("2d");
+
+        // Clear the interaction canvas completely
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-        this.drawPath();
+
+        // Draw in the correct order: obstacles first, then path, then player
         this.drawObstacles();
+        this.drawPath();
         this.drawPlayerPosition();
     }
 
@@ -144,8 +171,19 @@ export default class BreadthFirstSearch extends React.Component {
         // Visualize BFS results
         for (let l in this.state.cameFrom) {
             const { q, r, s } = JSON.parse(l);
-            const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-            this.drawHex(this.canvasView.current, this.Point(x, y), 1, "black", "SkyBlue", 0.1);
+            const { x, y } = hexToPixel(
+                Hex(q, r, s), 
+                this.state.hexSize, 
+                this.state.hexOrigin
+            );
+            drawHex(
+                ctx, 
+                Point(x, y), 
+                this.state.hexSize, 
+                "black", 
+                "SkyBlue", 
+                0.1
+            );
         }
 
         this.drawPlayerPosition();
@@ -173,119 +211,6 @@ export default class BreadthFirstSearch extends React.Component {
         });
     }
 
-    hexToPixel = (h) => {
-        let hexOrigin = this.state.hexOrigin;
-        let x = this.state.hexSize * Math.sqrt(3) * (h.q + h.r / 2) + hexOrigin.x;
-        let y = (this.state.hexSize * 3) / 2 * h.r + hexOrigin.y;
-        return this.Point(x, y);
-    }
-
-    pixelToHex = (p) => {
-        let size = this.state.hexSize;
-        let origin = this.state.hexOrigin;
-        let q = ((p.x - origin.x) * Math.sqrt(3) / 3 - (p.y - origin.y) / 3) / size;
-        let r = ((p.y - origin.y) * 2) / (3 * size);
-        return this.Hex(q, r, -q - r);
-    }
-
-    cubeDirection = (direction) => {
-        const cubeDirections = [
-            this.Hex(1, 0, -1),
-            this.Hex(1, -1, 0),
-            this.Hex(0, -1, 1),
-            this.Hex(-1, 0, 1),
-            this.Hex(-1, 1, 0),
-            this.Hex(0, 1, -1)
-        ];
-        return cubeDirections[direction];
-    }
-
-    cubeAdd = (a, b) => {
-        return this.Hex(a.q + b.q, a.r + b.r, a.s + b.s);
-    }
-
-    cubeSubstract = (hexA, hexB) => {
-        return this.Hex(
-            hexA.q - hexB.q,
-            hexA.r - hexB.r,
-            hexA.s - hexB.s
-        );
-    }
-
-    getCubeNeighbor = (h, direction) => {
-        return this.cubeAdd(h, this.cubeDirection(direction));
-    }
-
-    getNeighbors = (h) => {
-        var arr = [];
-        for (let i = 0; i <= 5; i++) {
-            const { q, r, s } = this.getCubeNeighbor(
-                this.Hex(h.q, h.r, h.s),
-                i
-            );
-            arr.push(this.Hex(q, r, s));
-        }
-        return arr;
-    }
-
-    cubeRound = (cube) => {
-        var rx = Math.round(cube.q);
-        var ry = Math.round(cube.r);
-        var rz = Math.round(cube.s);
-        var x_diff = Math.abs(rx - cube.q);
-        var y_diff = Math.abs(ry - cube.r);
-        var z_diff = Math.abs(rz - cube.s);
-        if (x_diff > y_diff && x_diff > z_diff) {
-            rx = -ry - rz;
-        } else if (y_diff > z_diff) {
-            ry = -rx - rz;
-        } else {
-            rz = -rx - ry;
-        }
-        return this.Hex(rx, ry, rz);
-    }
-
-    getDistanceLine = (hexA, hexB) => {
-        let dist = this.cubeDistance(hexA, hexB);
-        var arr = [];
-        for (let i = 0; i <= dist; i++) {
-            let center = this.hexToPixel(
-                this.cubeRound(
-                    this.cubeLinearInt(hexA, hexB, (1.0 / dist) * i)
-                )
-            );
-            arr = [].concat(arr, center);
-        }
-        this.setState({
-            currentDistanceLine: arr
-        });
-    }
-
-    cubeDistance = (hexA, hexB) => {
-        const { q, r, s } = this.cubeSubstract(hexA, hexB);
-        return (Math.abs(q) + Math.abs(r) + Math.abs(s)) / 2;
-    }
-
-    cubeLinearInt = (hexA, hexB, t) => {
-        return this.Hex(
-            this.linearInt(hexA.q, hexB.q, t),
-            this.linearInt(hexA.r, hexB.r, t),
-            this.linearInt(hexA.s, hexB.s, t)
-        );
-    }
-
-    linearInt = (a, b, t) => {
-        return a + (b - a) * t;
-    }
-
-    Point = (x, y) => {
-        return { x: x, y: y };
-    }
-
-    Hex = (q, r, s) => {
-        return { q: q, r: r, s: s };
-    }
-
     // Drawing methods
     drawHexes = () => {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
@@ -296,7 +221,7 @@ export default class BreadthFirstSearch extends React.Component {
         ctx.lineWidth = 1;
         ctx.strokeStyle = "black";
 
-        const { hexWidth, hexHeight, vertDist, horizDist } = this.state.hexParametres;
+        const { hexWidth, hexHeight, vertDist, horizDist } = this.state.hexParameters;
         const hexOrigin = this.state.hexOrigin;
         let qLeftSide = Math.round(hexOrigin.x / horizDist);
         let qRightSide = Math.round((canvasWidth - hexOrigin.x) / horizDist);
@@ -311,15 +236,15 @@ export default class BreadthFirstSearch extends React.Component {
                 p++;
             }
             for (let q = -qLeftSide; q <= qRightSide; q++) {
-                const hex = this.Hex(q - p, r, -(q - p) - r);
-                const { x, y } = this.hexToPixel(hex);
+                const hex = Hex(q - p, r, -(q - p) - r);
+                const { x, y } = hexToPixel(hex, this.state.hexSize, this.state.hexOrigin);
                 if (
                     x > hexWidth / 2 &&
                     x < canvasWidth - hexWidth / 2 &&
                     y > hexHeight / 2 &&
                     y < canvasHeight - hexHeight / 2
                 ) {
-                    this.drawHex(this.canvasHex.current, this.Point(x, y), 1, "black", "SkyBlue");
+                    drawHex(ctx, Point(x, y), this.state.hexSize, "black", "SkyBlue");
                     hexPathMap.push(JSON.stringify(hex));
                 }
             }
@@ -332,15 +257,15 @@ export default class BreadthFirstSearch extends React.Component {
                 n++;
             }
             for (let q = -qLeftSide; q <= qRightSide; q++) {
-                const hex = this.Hex(q + n, r, -(q + n) - r);
-                const { x, y } = this.hexToPixel(hex);
+                const hex = Hex(q + n, r, -(q + n) - r);
+                const { x, y } = hexToPixel(hex, this.state.hexSize, this.state.hexOrigin);
                 if (
                     x > hexWidth / 2 &&
                     x < canvasWidth - hexWidth / 2 &&
                     y > hexHeight / 2 &&
                     y < canvasHeight - hexHeight / 2
                 ) {
-                    this.drawHex(this.canvasHex.current, this.Point(x, y), 1, "black", "SkyBlue");
+                    drawHex(ctx, Point(x, y), this.state.hexSize, "black", "SkyBlue");
                     hexPathMap.push(JSON.stringify(hex));
                 }
             }
@@ -349,110 +274,30 @@ export default class BreadthFirstSearch extends React.Component {
         this.setState({ hexPathMap });
     }
 
-    drawHex = (canvasID, center, lineWidth, lineColor, fillColor, alpha = 1.0) => {
-        // Always use a consistent line width
-        const standardLineWidth = 1;
-
-        // Fill the hexagon first
-        this.fillHex(canvasID, center, fillColor, alpha);
-
-        // Then draw the outline with consistent width
-        for (let i = 0; i <= 5; i++) {
-            let start = this.getHexCornerCoord(center, i);
-            let end = this.getHexCornerCoord(center, i + 1);
-            this.drawLine(canvasID, start, end, standardLineWidth, lineColor);
-        }
-    }
-
-    getHexCornerCoord = (center, i) => {
-        let angle_deg = 60 * i + 30;
-        let angle_rad = (Math.PI / 180) * angle_deg;
-        let x = center.x + this.state.hexSize * Math.cos(angle_rad);
-        let y = center.y + this.state.hexSize * Math.sin(angle_rad);
-        return this.Point(x, y);
-    }
-
-    drawLine = (canvasID, start, end, lineWidth, lineColor) => {
-        const ctx = canvasID.getContext("2d");
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = lineWidth;
-        ctx.lineTo(end.x, end.y);
-        ctx.stroke();
-        ctx.closePath();
-    }
-
-    fillHex = (canvasID, center, fillColor, alpha = 1.0) => {
-        let c0 = this.getHexCornerCoord(center, 0);
-        let c1 = this.getHexCornerCoord(center, 1);
-        let c2 = this.getHexCornerCoord(center, 2);
-        let c3 = this.getHexCornerCoord(center, 3);
-        let c4 = this.getHexCornerCoord(center, 4);
-        let c5 = this.getHexCornerCoord(center, 5);
-        const ctx = canvasID.getContext("2d");
-        ctx.beginPath();
-        ctx.fillStyle = fillColor;
-        ctx.globalAlpha = alpha;
-        ctx.moveTo(c0.x, c0.y);
-        ctx.lineTo(c1.x, c1.y);
-        ctx.lineTo(c2.x, c2.y);
-        ctx.lineTo(c3.x, c3.y);
-        ctx.lineTo(c4.x, c4.y);
-        ctx.lineTo(c5.x, c5.y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.globalAlpha = 1.0; // Reset alpha after drawing
-    }
-
-    drawHexCoordinates = (canvasID, center, h) => {
-        const ctx = canvasID.getContext("2d");
-        ctx.fillText(h.q, center.x + 6, center.y);
-        ctx.fillText(h.r, center.x - 3, center.y + 15);
-        ctx.fillText(h.s, center.x - 12, center.y);
-    }
-
-    drawNeighbors = (h) => {
-        for (let i = 0; i <= 5; i++) {
-            const { q, r, s } = this.getCubeNeighbor(
-                this.Hex(h.q, h.r, h.s),
-                i
-            );
-            const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-            this.drawHex(
-                this.canvasInteraction.current,
-                this.Point(x, y),
-                1,
-                "black",
-                "red"
-            );
-        }
-    }
-
-    drawSingleObstacle = (hexStr, lineColor, fillColor) => {
-        const { q, r, s } = JSON.parse(hexStr);
-        const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-        this.drawHex(this.canvasInteraction.current, this.Point(x, y), 1, lineColor, fillColor);
-    }
-
-    drawSingleHex = (hexStr, color) => {
-        const { q, r, s } = JSON.parse(hexStr);
-        const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-        this.drawHex(this.canvasInteraction.current, this.Point(x, y), 1, "yellow", color);
-    }
-
     drawObstacles = () => {
         this.obstaclesRef.current.forEach(hexStr => {
-            this.drawSingleObstacle(hexStr, "black", "grey");
+            const { q, r, s } = JSON.parse(hexStr);
+            const { x, y } = hexToPixel(Hex(q, r, s), this.state.hexSize, this.state.hexOrigin);
+            drawHex(
+                this.canvasInteraction.current.getContext("2d"), 
+                Point(x, y), 
+                this.state.hexSize, 
+                "black", 
+                "grey"
+            );
         });
     }
 
     drawPlayerPosition = () => {
-        const { x, y } = this.hexToPixel(this.state.playerPosition);
-        this.drawHex(
-            this.canvasInteraction.current,
-            this.Point(x, y),
-            1,
+        const { x, y } = hexToPixel(
+            this.state.playerPosition, 
+            this.state.hexSize, 
+            this.state.hexOrigin
+        );
+        drawHex(
+            this.canvasInteraction.current.getContext("2d"),
+            Point(x, y),
+            this.state.hexSize,
             "black", // Border color
             "green", // Fill color
             1.0      // Full opacity
@@ -461,17 +306,38 @@ export default class BreadthFirstSearch extends React.Component {
 
     drawPath = () => {
         let path = this.state.path;
-        for (let i = 0; i <= path.length - 1; i++) {
+        if (!path || path.length === 0) return;
+
+        // Draw the path on the interaction canvas, not a dedicated path canvas
+        for (let i = 0; i < path.length; i++) {
             const { q, r } = JSON.parse(path[i]);
-            const { x, y } = this.hexToPixel(this.Hex(q, r, -q - r));
-            this.drawHex(this.canvasInteraction.current, this.Point(x, y), 1, "black", "red");
+            const { x, y } = hexToPixel(
+                Hex(q, r, -q - r), 
+                this.state.hexSize, 
+                this.state.hexOrigin
+            );
+            drawHex(
+                this.canvasInteraction.current.getContext("2d"),
+                Point(x, y),
+                this.state.hexSize,
+                "black",
+                "red"
+            );
         }
     }
 
     // Event handlers
     handleMouseMove = (e) => {
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
-        const { hexWidth, hexHeight } = this.state.hexParametres;
+        const { hexSize, hexOrigin } = this.state;
+
+        // Ensure hexParameters is available
+        if (!this.state.hexParameters) {
+            console.error("hexParameters not available");
+            return;
+        }
+
+        const { hexWidth, hexHeight } = this.state.hexParameters;
 
         // Get mouse position relative to canvas
         const canvasInteraction = this.canvasInteraction.current;
@@ -482,20 +348,22 @@ export default class BreadthFirstSearch extends React.Component {
         let offsetY = e.pageY - (window.pageYOffset + rect.top);
 
         // Convert to hex coordinates
-        const { q, r, s } = this.cubeRound(
-            this.pixelToHex(this.Point(offsetX, offsetY))
+        const { q, r, s } = cubeRound(
+            pixelToHex(Point(offsetX, offsetY), hexSize, hexOrigin)
         );
-        const { x, y } = this.hexToPixel(this.Hex(q, r, s));
+
+        const { x, y } = hexToPixel(
+            Hex(q, r, s), 
+            hexSize, 
+            hexOrigin
+        );
 
         // Get player position
         let playerPosition = this.state.playerPosition;
 
-        // Calculate path from player to current mouse position
-        this.getDistanceLine(this.Hex(playerPosition.q, playerPosition.r, playerPosition.s), this.Hex(q, r, s));
-        this.getPath(
-            this.Hex(playerPosition.q, playerPosition.r, playerPosition.s),
-            this.Hex(q, r, s)
-        );
+        // Check if the current hex is a wall
+        const hexStr = JSON.stringify(Hex(q, r, s));
+        const isWall = this.obstaclesRef.current.has(hexStr);
 
         // Update current hex if within bounds
         if (
@@ -507,31 +375,99 @@ export default class BreadthFirstSearch extends React.Component {
             this.setState({
                 currentHex: { q, r, s, x, y }
             });
+
+            // Only update lastValidHex and path if not on a wall
+            if (!isWall) {
+                // Calculate path
+                const path = getPath(
+                    Hex(playerPosition.q, playerPosition.r, playerPosition.s),
+                    Hex(q, r, s),
+                    this.state.cameFrom
+                );
+
+                this.setState({
+                    lastValidHex: { q, r, s, x, y },
+                    path
+                });
+            }
         }
 
         // Handle wall creation/deletion with right mouse drag
         if (this.state.isRightMouseDown) {
-            const hexStr = JSON.stringify(this.Hex(q, r, s));
+            // Add throttling to prevent too frequent updates
+            const now = Date.now();
+            if (this.lastWallUpdateTime && now - this.lastWallUpdateTime < 50) return;
+            this.lastWallUpdateTime = now;
+
             if (hexStr === this.lastRightDragHex) return;
             this.lastRightDragHex = hexStr;
 
-            if (!this.obstaclesRef.current.has(hexStr)) {
+            // Create a temporary variable to hold our current obstacles
+            const obstacles = new Set(this.obstaclesRef.current);
+
+            if (!obstacles.has(hexStr)) {
                 // Add wall
-                this.obstaclesRef.current.add(hexStr);
-                this.drawHex(this.canvasInteraction.current, this.Point(x, y), 1, "black", "grey");
+                obstacles.add(hexStr);
+                drawHex(
+                    this.canvasInteraction.current.getContext("2d"), 
+                    Point(x, y), 
+                    this.state.hexSize, 
+                    "black", 
+                    "grey"
+                );
             } else {
                 // Remove wall
-                this.obstaclesRef.current.delete(hexStr);
-                this.drawHex(this.canvasInteraction.current, this.Point(x, y), 1, "black", "SkyBlue");
+                obstacles.delete(hexStr);
+                drawHex(
+                    this.canvasInteraction.current.getContext("2d"), 
+                    Point(x, y), 
+                    this.state.hexSize, 
+                    "black", 
+                    "SkyBlue"
+                );
             }
-            this.breadthFirstSearch(this.state.playerPosition);
+
+            // Update the obstaclesRef
+            this.obstaclesRef.current = obstacles;
+
+            // Run BFS with updated obstacles
+            const cameFrom = breadthFirstSearch(
+                this.state.playerPosition, 
+                this.state.hexPathMap, 
+                obstacles
+            );
+
+            // Update state with new BFS results
+            this.setState({
+                obstacles: Array.from(obstacles),
+                cameFrom
+            }, () => {
+                // If we're on a wall, use lastValidHex for path calculation
+                if (isWall && this.state.lastValidHex) {
+                    const newPath = getPath(
+                        Hex(playerPosition.q, playerPosition.r, playerPosition.s),
+                        Hex(this.state.lastValidHex.q, this.state.lastValidHex.r, this.state.lastValidHex.s),
+                        cameFrom
+                    );
+
+                    // Only update the path, not the current hex
+                    this.setState({ path: newPath }, () => {
+                        // Redraw with the correct order
+                        const ctx = this.canvasInteraction.current.getContext("2d");
+                        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+                        this.drawObstacles();
+                        this.drawPath();
+                        this.drawPlayerPosition();
+                    });
+                }
+            });
         }
     }
 
     handleClick = () => {
         const { currentHex } = this.state;
         const { q, r, s } = currentHex;
-        const hexStr = JSON.stringify(this.Hex(q, r, s));
+        const hexStr = JSON.stringify(Hex(q, r, s));
 
         // Don't allow moving to obstacles
         if (this.obstaclesRef.current.has(hexStr)) {
@@ -540,33 +476,33 @@ export default class BreadthFirstSearch extends React.Component {
 
         // Clear all canvases completely
         const { canvasWidth, canvasHeight } = this.state.canvasSize;
-        const ctxHex = this.canvasHex.current.getContext("2d");
-        const ctxInteraction = this.canvasInteraction.current.getContext("2d");
-        const ctxView = this.canvasView.current.getContext("2d");
-
-        ctxHex.clearRect(0, 0, canvasWidth, canvasHeight);
-        ctxInteraction.clearRect(0, 0, canvasWidth, canvasHeight);
-        ctxView.clearRect(0, 0, canvasWidth, canvasHeight);
+        clearCanvas(this.canvasHex.current, canvasWidth, canvasHeight);
+        clearCanvas(this.canvasInteraction.current, canvasWidth, canvasHeight);
+        clearCanvas(this.canvasView.current, canvasWidth, canvasHeight);
 
         // Update player position unconditionally
         this.setState(
             {
                 path: [],
-                playerPosition: this.Hex(q, r, s)
+                playerPosition: Hex(q, r, s)
             },
             () => {
                 // Redraw everything from scratch
                 this.drawHexes();
-                this.breadthFirstSearch(this.state.playerPosition);
-                this.drawObstacles();
 
-                // Draw path if needed
-                if (this.state.path.length > 0) {
-                    this.drawPath();
-                }
-
-                // Draw player last so it's on top
-                this.drawPlayerPosition();
+                const cameFrom = breadthFirstSearch(
+                    this.state.playerPosition,
+                    this.state.hexPathMap,
+                    this.obstaclesRef.current
+                );
+                this.setState({ cameFrom }, () => {
+                    // Draw in the correct order
+                    this.drawObstacles();
+                    if (this.state.path.length > 0) {
+                        this.drawPath();
+                    }
+                    this.drawPlayerPosition();
+                });
             }
         );
     }
@@ -574,6 +510,7 @@ export default class BreadthFirstSearch extends React.Component {
     handleRightClick = (e) => {
         e.preventDefault();
         this.setState({ isRightMouseDown: true });
+        this.lastWallUpdateTime = Date.now(); // Initialize the throttling timestamp
 
         const canvasInteraction = this.canvasInteraction.current;
         if (!canvasInteraction) return;
@@ -581,33 +518,76 @@ export default class BreadthFirstSearch extends React.Component {
         const rect = canvasInteraction.getBoundingClientRect();
         const offsetX = e.pageX - rect.left;
         const offsetY = e.pageY - (window.pageYOffset + rect.top);
-        const hex = this.cubeRound(
-            this.pixelToHex(this.Point(offsetX, offsetY))
+        const hex = cubeRound(
+            pixelToHex(Point(offsetX, offsetY), this.state.hexSize, this.state.hexOrigin)
         );
         const hexStr = JSON.stringify(hex);
 
+        // Store the current path to restore it after wall operation
+        const currentPath = [...this.state.path];
+
+        // Create a temporary variable to hold our current obstacles
+        const obstacles = new Set(this.obstaclesRef.current);
+
         // Toggle obstacle state
-        if (this.obstaclesRef.current.has(hexStr)) {
-            this.obstaclesRef.current.delete(hexStr);
+        if (obstacles.has(hexStr)) {
+            obstacles.delete(hexStr);
         } else {
-            this.obstaclesRef.current.add(hexStr);
+            obstacles.add(hexStr);
         }
+
+        // Update the obstaclesRef
+        this.obstaclesRef.current = obstacles;
 
         // Update state and redraw
         this.setState(
-            { obstacles: Array.from(this.obstaclesRef.current) },
+            { obstacles: Array.from(obstacles) },
             () => {
                 // Redraw the grid
-                const ctx = this.canvasHex.current.getContext("2d");
-                ctx.clearRect(
-                    0,
-                    0,
+                clearCanvas(
+                    this.canvasHex.current,
                     this.state.canvasSize.canvasWidth,
                     this.state.canvasSize.canvasHeight
                 );
                 this.drawHexes();
-                this.drawObstacles();
-                this.breadthFirstSearch(this.state.playerPosition);
+
+                const cameFrom = breadthFirstSearch(
+                    this.state.playerPosition,
+                    this.state.hexPathMap,
+                    obstacles
+                );
+
+                this.setState({ cameFrom }, () => {
+                    // If the hex we right-clicked on is now a wall, use lastValidHex for path
+                    if (obstacles.has(hexStr)) {
+                        const { lastValidHex, playerPosition } = this.state;
+                        if (lastValidHex) {
+                            const newPath = getPath(
+                                Hex(playerPosition.q, playerPosition.r, playerPosition.s),
+                                Hex(lastValidHex.q, lastValidHex.r, lastValidHex.s),
+                                cameFrom
+                            );
+                            this.setState({ path: newPath });
+                        } else {
+                            this.setState({ path: currentPath }); // Restore original path
+                        }
+                    } else {
+                        // If we removed a wall, update the lastValidHex to current position
+                        this.setState({ 
+                            lastValidHex: hex,
+                            path: getPath(
+                                Hex(this.state.playerPosition.q, this.state.playerPosition.r, this.state.playerPosition.s),
+                                hex,
+                                cameFrom
+                            )
+                        });
+                    }
+
+                    // Draw in the correct order
+                    this.drawObstacles();
+                    this.drawPath();
+                    this.drawPlayerPosition();
+                });
             }
         );
     }
@@ -617,104 +597,20 @@ export default class BreadthFirstSearch extends React.Component {
             this.setState({
                 obstacles: Array.from(this.obstaclesRef.current),
                 isRightMouseDown: false
+            }, () => {
+                // When mouse up, redraw everything in the correct order
+                const { canvasWidth, canvasHeight } = this.state.canvasSize;
+                const ctx = this.canvasInteraction.current.getContext("2d");
+                ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+                this.drawObstacles();
+                this.drawPath();
+                this.drawPlayerPosition();
             });
+
             this.lastRightDragHex = null;
-            this.lastRightDragTime = 0;
+            this.lastWallUpdateTime = 0;
         }
-    }
-
-    // Path finding and search algorithms
-    getPath = (start, current) => {
-        const { cameFrom } = this.state;
-        start = JSON.stringify(start);
-        current = JSON.stringify(current);
-
-        if (!cameFrom[current] || !cameFrom[start]) return;
-
-        let path = [current];
-        let safetyCounter = 0;
-        const maxSteps = 1000;
-
-        while (current !== start && safetyCounter < maxSteps) {
-            current = cameFrom[current];
-            if (!current) break;
-            path.push(current);
-            safetyCounter++;
-        }
-
-        if (safetyCounter >= maxSteps) {
-            console.warn("Pathfinding exceeded maximum steps");
-            return;
-        }
-
-        this.setState({
-            path: path.reverse()
-        });
-    }
-
-    breadthFirstSearch = (playerPosition) => {
-        const { hexPathMap } = this.state;
-        const frontier = [playerPosition];
-        const cameFrom = { [JSON.stringify(playerPosition)]: JSON.stringify(playerPosition) };
-
-        while (frontier.length > 0) {
-            const current = frontier.shift();
-            this.getNeighbors(current).forEach(neighbor => {
-                const neighborStr = JSON.stringify(neighbor);
-                if (
-                    !cameFrom[neighborStr] &&
-                    hexPathMap.includes(neighborStr) &&
-                    !this.obstaclesRef.current.has(neighborStr)
-                ) {
-                    frontier.push(neighbor);
-                    cameFrom[neighborStr] = JSON.stringify(current);
-                }
-            });
-        }
-
-        // Update state and ensure visualization
-        this.setState({ cameFrom });
-    }
-
-    breadthFirstSearchInitial = (playerPosition) => {
-        const { hexPathMap } = this.state;
-        if (!hexPathMap || hexPathMap.length === 0) {
-            console.warn("hexPathMap not ready yet");
-            return;
-        }
-
-        const frontier = [playerPosition];
-        const cameFrom = { [JSON.stringify(playerPosition)]: JSON.stringify(playerPosition) };
-
-        while (frontier.length > 0) {
-            const current = frontier.shift();
-            this.getNeighbors(current).forEach(neighbor => {
-                const neighborStr = JSON.stringify(neighbor);
-                if (
-                    !cameFrom[neighborStr] &&
-                    hexPathMap.includes(neighborStr) &&
-                    !this.obstaclesRef.current.has(neighborStr)
-                ) {
-                    frontier.push(neighbor);
-                    cameFrom[neighborStr] = JSON.stringify(current);
-                }
-            });
-        }
-
-        // Directly draw the BFS visualization without setState
-        const { canvasWidth, canvasHeight } = this.state.canvasSize;
-        const ctx = this.canvasView.current.getContext("2d");
-        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-        // Draw the BFS visualization
-        for (let l in cameFrom) {
-            const { q, r, s } = JSON.parse(l);
-            const { x, y } = this.hexToPixel(this.Hex(q, r, s));
-            this.drawHex(this.canvasView.current, this.Point(x, y), 1, "black", "SkyBlue", 0.1);
-        }
-
-        // Update state after drawing
-        this.setState({ cameFrom });
     }
 
     // Utility functions
@@ -723,64 +619,74 @@ export default class BreadthFirstSearch extends React.Component {
         this.obstaclesRef.current = new Set(this.originalWalls);
 
         // Update state
-        this.setState({
-            obstacles: Array.from(this.originalWalls)
-        }, () => {
-            // Redraw everything
-            const { canvasWidth, canvasHeight } = this.state.canvasSize;
-            const ctxInteraction = this.canvasInteraction.current.getContext("2d");
-            ctxInteraction.clearRect(0, 0, canvasWidth, canvasHeight);
+        this.setState(
+            { obstacles: Array.from(this.originalWalls) },
+            () => {
+                // Redraw everything
+                const { canvasWidth, canvasHeight } = this.state.canvasSize;
+                clearCanvas(this.canvasInteraction.current, canvasWidth, canvasHeight);
 
-            this.drawHexes();
-            this.drawObstacles();
-            this.breadthFirstSearch(this.state.playerPosition);
+                this.drawHexes();
+                this.drawObstacles();
 
-            // Draw path if needed
-            if (this.state.path.length > 0) {
-                this.drawPath();
+                const cameFrom = breadthFirstSearch(
+                    this.state.playerPosition,
+                    this.state.hexPathMap,
+                    this.obstaclesRef.current
+                );
+                this.setState({ cameFrom }, () => {
+                    // Draw path if needed
+                    if (this.state.path.length > 0) {
+                        this.drawPath();
+                    }
+
+                    // Draw player last so it's on top
+                    this.drawPlayerPosition();
+                });
             }
-
-            // Draw player last so it's on top
-            this.drawPlayerPosition();
-        });
-    }
-
-    resetSketch = () => {
-        window.location.reload();
+        );
     }
 
     render() {
+        const { canvasWidth, canvasHeight } = this.state.canvasSize;
+
         return (
-            <div className="BFSExtra" style={{ display: 'flex', flexDirection: 'row' }}>
+            <div className="BFSExtra">
             <div className="canvasWrapper">
-            <canvas ref={this.canvasHex}></canvas>
-            <canvas ref={this.canvasCoordinates}></canvas>
-            <canvas ref={this.canvasView}></canvas>
-            <canvas
-            ref={this.canvasInteraction}
+            <Canvas 
+            id="hexCanvas"
+            className="display"
+            forwardedRef={this.canvasHex}
+            width={canvasWidth}
+            height={canvasHeight}
+            />
+            <Canvas 
+            id="coordCanvas"
+            className="display"
+            forwardedRef={this.canvasCoordinates}
+            width={canvasWidth}
+            height={canvasHeight}
+            />
+            <Canvas 
+            id="viewCanvas"
+            className="display"
+            forwardedRef={this.canvasView}
+            width={canvasWidth}
+            height={canvasHeight}
+            />
+            {/* REMOVE pathCanvas */}
+            <Canvas 
+            id="interactionCanvas"
+            className="interactive"
+            forwardedRef={this.canvasInteraction}
+            width={canvasWidth}
+            height={canvasHeight}
             onMouseMove={this.handleMouseMove}
             onClick={this.handleClick}
             onContextMenu={this.handleRightClick}
-            ></canvas>
+            />
             </div>
-            <div className="controlPanel" style={{ marginLeft: '20px', display: 'flex', flexDirection: 'column' }}>
-            <button 
-            onClick={this.clearWalls}
-            style={{
-                padding: '10px 15px',
-                    backgroundColor: '#4CAF50',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '16px',
-                    marginTop: '20px',
-                    width: 'fit-content'  // This makes the button only as wide as its content
-            }}
-            >
-            Clear Walls
-            </button>
-            </div>
+            <Controls onClearWalls={this.clearWalls} />
             </div>
         );
     }
